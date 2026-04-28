@@ -98,7 +98,6 @@ exports.registerUser = async (req, res, next) => {
       });
     }
 
-    // 🔴 CHECK EXISTING USER
     const existingUser = await User.findOne({ mobile: data.mobile });
 
     if (existingUser) {
@@ -111,10 +110,9 @@ exports.registerUser = async (req, res, next) => {
     if (req.file) {
       data.profile_img = req.file.filename;
     }
-    // ✅ CREATE NEW USER
+
     const user = await User.create(data);
 
-    // ✅ Build image URL if image exists
     const imageUrl = user.profile_img
       ? `${req.protocol}://${req.get('host')}/uploads/profile_images/${user.profile_img}`
       : null;
@@ -124,11 +122,15 @@ exports.registerUser = async (req, res, next) => {
       message: "User Registered Successfully",
       user: {
         ...user.toObject(),
-        profile_img_url: imageUrl  // ✅ full URL for Flutter
+        profile_img_url: imageUrl
       }
     });
 
   } catch (error) {
-    next(error);
+    console.error(error); // 👈 helpful log
+    return res.status(500).json({
+      success: false,
+      error: error.message
+    });
   }
 };
