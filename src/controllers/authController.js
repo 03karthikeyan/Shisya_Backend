@@ -3,7 +3,7 @@ const Otp = require('../models/Otp');
 const { generateOtp } = require('../utils/otpGenerator');
 
 // 🔹 LOGIN (SEND OTP)
-exports.login = async (req, res) => {
+exports.login = async (req, res, next) => {
   try {
     const { mobile } = req.body;
 
@@ -11,6 +11,16 @@ exports.login = async (req, res) => {
       return res.status(400).json({
         success: false,
         message: "Mobile number required"
+      });
+    }
+
+    // 🔴 CHECK USER EXISTS
+    const user = await User.findOne({ mobile });
+
+    if (!user) {
+      return res.status(400).json({
+        success: false,
+        message: "Mobile number not registered. Please register first."
       });
     }
 
@@ -25,7 +35,7 @@ exports.login = async (req, res) => {
     });
 
   } catch (error) {
-    res.status(500).json({ success: false, error: error.message });
+    next(error);
   }
 };
 
@@ -33,7 +43,7 @@ exports.login = async (req, res) => {
 // 🔹 VERIFY OTP (FIXED)
 exports.verifyOtp = async (req, res) => {
   try {
-    const { mobile, otp } = req.body; // ✅ FIXED
+    const { mobile, otp } = req.body;
 
     if (!mobile || !otp) {
       return res.status(400).json({
@@ -45,7 +55,10 @@ exports.verifyOtp = async (req, res) => {
     const validOtp = await Otp.findOne({ mobile, otp });
 
     if (!validOtp) {
-      return res.json({ success: false, message: "Invalid OTP" });
+      return res.json({
+        success: false,
+        message: "Invalid OTP"
+      });
     }
 
     // ✅ Delete OTP after use
@@ -60,19 +73,23 @@ exports.verifyOtp = async (req, res) => {
     return res.json({
       success: true,
       message: "OTP Verified",
-      user
+      data: user
     });
 
   } catch (error) {
-    res.status(500).json({ success: false, error: error.message });
+    console.error("VERIFY OTP ERROR:", error); // 🔥 better debugging
+    res.status(500).json({
+      success: false,
+      error: error.message   // 👈 show actual error
+    });
   }
 };
 
 
 // 🔹 REGISTER USER (FIXED)
-exports.registerUser = async (req, res) => {
+exports.registerUser = async (req, res, next) => {
   try {
-    const data = req.body; // ✅ FIXED
+    const data = req.body;
 
     if (!data.mobile) {
       return res.status(400).json({
@@ -81,19 +98,37 @@ exports.registerUser = async (req, res) => {
       });
     }
 
-    const user = await User.findOneAndUpdate(
-      { mobile: data.mobile },
-      data,
-      { new: true, upsert: true }
-    );
+    // 🔴 CHECK EXISTING USER
+    const existingUser = await User.findOne({ mobile: data.mobile });
+
+    if (existingUser) {
+      return res.status(400).json({
+        success: false,
+        message: "This mobile number already exists"
+      });
+    }
+
+    if (req.file) {
+      data.profile_img = req.file.filename;
+    }
+    // ✅ CREATE NEW USER
+    const user = await User.create(data);
+
+    // ✅ Build image URL if image exists
+    const imageUrl = user.profile_img
+      ? `${req.protocol}://${req.get('host')}/uploads/profile_images/${user.profile_img}`
+      : null;
 
     return res.json({
       success: true,
-      message: "User Registered",
-      user
+      message: "User Registered Successfully",
+      user: {
+        ...user.toObject(),
+        profile_img_url: imageUrl  // ✅ full URL for Flutter
+      }
     });
 
   } catch (error) {
-    res.status(500).json({ success: false, error: error.message });
+    next(error);
   }
 };
