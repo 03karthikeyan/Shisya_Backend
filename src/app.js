@@ -5,6 +5,9 @@ const path = require('path'); // ✅ ADD THIS
 
 const app = express();
 
+app.use(express.json());
+app.use(express.urlencoded({ extended: true }));
+
 const allowedOrigins = process.env.CLIENT_ORIGIN
     ? process.env.CLIENT_ORIGIN.split(',').map((origin) => origin.trim())
     : true;
@@ -21,6 +24,7 @@ app.use(express.urlencoded({ extended: true }));
 // ✅ Correct route separation
 app.use('/matrimony/api/auth', require('./routes/authRoutes'));
 app.use('/matrimony/api', require('./routes/appRoutes'));
+app.use("/matrimony/api/chat", require("./routes/appRoutes"));
 app.use('/uploads', express.static(path.join(__dirname, '../uploads')));
 
 // Global error handler (must be last)

@@ -16,9 +16,31 @@ router.get('/subscription', ctrl.purchaseSubscription);
 router.get('/subscription_status', ctrl.getSubscriptionStatus);
 
 router.get('/matching_profile', ctrl.getMatchingProfiles);
+router.get("/filter-profiles", ctrl.filterProfiles);
 
-router.get('/get_messages', ctrl.getMessages);
-router.get('/send_message', ctrl.sendMessage);
+// 🔹 Send Message
+router.post("/send", ctrl.sendMessage);
+
+// 🔹 Get Messages (between 2 users)
+router.get("/messages", ctrl.getMessages);
+
+// 🔹 Chat List (all conversations)
+router.get("/list", ctrl.getChatList);
+
+// 🔹 Mark as Read
+router.post("/read", ctrl.markAsRead);
+router.get('/read', ctrl.markAsRead);     
+
+// 🔹 Delete Single Message
+router.delete("/message/:message_id", ctrl.deleteMessage);
+
+// 🔹 Delete Full Chat
+router.delete('/message/:message_id', ctrl.deleteMessage); // DELETE /chat/message/:id
+router.delete('/delete', ctrl.deleteChat); 
+
+// 🔹 Unread Count
+router.get("/unread", ctrl.getUnreadCount);
+
 
 router.get('/profile_fetch', ctrl.getProfile);
 router.get('/profile_update', ctrl.updateProfile);
@@ -32,6 +54,7 @@ router.get('/received_interests', ctrl.getReceivedInterests);
 router.get('/sent_interests', ctrl.getSentInterests);
 
 router.get('/who_viewed_my_profile', ctrl.whoViewedMyProfile);
+router.post('/view_profile', ctrl.viewProfile);  // ✅ change to POST and get data from body instead of query
 router.get('/recently_viewed_profiles', ctrl.recentlyViewedProfiles);       // ✅ was undefined
 router.get('/who_viewed_profile_recently', ctrl.whoViewedProfileRecently);  // ✅ add this missing route
 

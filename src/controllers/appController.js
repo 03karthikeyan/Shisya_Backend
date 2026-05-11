@@ -4,6 +4,15 @@ const Interest = require('../models/Interest');
 const ProfileView = require('../models/ProfileView');
 const Subscription = require('../models/Subscription');
 const mongoose = require("mongoose");
+const { ObjectId } = mongoose.Types;
+
+function toObjectId(id) {
+  try {
+    return new ObjectId(id);
+  } catch {
+    return null;
+  }
+}
 
 // 🔹 RELIGION LIST
 exports.getReligions = async (req, res, next) => {
@@ -405,17 +414,34 @@ exports.getMatchingProfiles = async (req, res, next) => {
   }
 };
 
-// 🔹 GET MESSAGES
+
+// ─────────────────────────────────────────────────────────────────────────────
+// GET /chat/messages?sender_id=&receiver_id=
+// Returns all messages between two users, sorted oldest → newest
+// ─────────────────────────────────────────────────────────────────────────────
 exports.getMessages = async (req, res, next) => {
   try {
     const { sender_id, receiver_id } = req.query;
 
+    if (!sender_id || !receiver_id) {
+      return res.status(400).json({
+        success: false,
+        message: 'sender_id and receiver_id are required',
+      });
+    }
+
     const messages = await Message.find({
       $or: [
-        { sender_id, receiver_id },
-        { sender_id: receiver_id, receiver_id: sender_id }
-      ]
-    });
+        { sender_id: sender_id, receiver_id: receiver_id },
+        { sender_id: receiver_id, receiver_id: sender_id },
+      ],
+    }).sort({ createdAt: 1 });
+
+    // Auto-mark messages as read when fetched by receiver
+    await Message.updateMany(
+      { sender_id: receiver_id, receiver_id: sender_id, is_read: false },
+      { $set: { is_read: true } }
+    );
 
     res.json({ success: true, data: messages });
   } catch (error) {
@@ -423,20 +449,272 @@ exports.getMessages = async (req, res, next) => {
   }
 };
 
-
-// 🔹 SEND MESSAGE
+// ─────────────────────────────────────────────────────────────────────────────
+// POST /chat/send
+// Body: { sender_id, receiver_id, message }
+// ─────────────────────────────────────────────────────────────────────────────
 exports.sendMessage = async (req, res, next) => {
   try {
-    const { sender_id, receiver_id, message } = req.query;
+    const { sender_id, receiver_id, message } = req.body;
 
-    await Message.create({ sender_id, receiver_id, message });
+    if (!sender_id || !receiver_id || !message) {
+      return res.status(400).json({
+        success: false,
+        message: 'sender_id, receiver_id, and message are required',
+      });
+    }
 
-    res.json({ success: true, message: "Message sent" });
+    if (message.trim().length === 0) {
+      return res.status(400).json({
+        success: false,
+        message: 'Message cannot be empty',
+      });
+    }
+
+    const newMsg = await Message.create({
+      sender_id,
+      receiver_id,
+      message: message.trim(),
+      is_read: false,
+    });
+
+    res.json({ success: true, data: newMsg });
   } catch (error) {
     next(error);
   }
 };
 
+// ─────────────────────────────────────────────────────────────────────────────
+// GET /chat/list?user_id=
+// Returns one entry per conversation partner with:
+//   _id, name, profile_img, lastMessage, lastSenderId, lastTime, unreadCount, isSeen
+// ─────────────────────────────────────────────────────────────────────────────
+exports.getChatList = async (req, res, next) => {
+  try {
+    const { user_id } = req.query;
+
+    if (!user_id) {
+      return res.status(400).json({
+        success: false,
+        message: 'user_id is required',
+      });
+    }
+
+    // Support both ObjectId and string-stored IDs
+    const uid = toObjectId(user_id);
+    const matchCondition = uid
+      ? {
+        $or: [
+          { sender_id: uid },
+          { receiver_id: uid },
+          { sender_id: user_id },   // fallback for string-stored IDs
+          { receiver_id: user_id },
+        ],
+      }
+      : {
+        $or: [{ sender_id: user_id }, { receiver_id: user_id }],
+      };
+
+    const chats = await Message.aggregate([
+      // Step 1: Match all messages involving this user
+      { $match: matchCondition },
+
+      // Step 2: Sort newest first so $first in group gives latest message
+      { $sort: { createdAt: -1 } },
+
+      // Step 3: Group by the other person in the conversation
+      {
+        $group: {
+          _id: {
+            $cond: [
+              {
+                $or: [
+                  { $eq: ['$sender_id', uid] },
+                  { $eq: ['$sender_id', user_id] },
+                ],
+              },
+              '$receiver_id',
+              '$sender_id',
+            ],
+          },
+          lastMessage: { $first: '$message' },
+          lastSenderId: { $first: '$sender_id' },
+          lastTime: { $first: '$createdAt' },
+          isSeen: { $first: { $cond: ['$is_read', '1', '0'] } },
+
+          // Count unread messages sent TO this user
+          unreadCount: {
+            $sum: {
+              $cond: [
+                {
+                  $and: [
+                    {
+                      $or: [
+                        { $eq: ['$receiver_id', uid] },
+                        { $eq: ['$receiver_id', user_id] },
+                      ],
+                    },
+                    { $eq: ['$is_read', false] },
+                  ],
+                },
+                1,
+                0,
+              ],
+            },
+          },
+        },
+      },
+
+      // Step 4: Look up partner's user document
+      {
+        $lookup: {
+          from: 'users',
+          let: { partnerId: '$_id' },
+          pipeline: [
+            {
+              $match: {
+                $expr: {
+                  $or: [
+                    { $eq: ['$_id', '$$partnerId'] },
+                    { $eq: [{ $toString: '$_id' }, { $toString: '$$partnerId' }] },
+                  ],
+                },
+              },
+            },
+            { $limit: 1 },
+          ],
+          as: 'user',
+        },
+      },
+
+      // Step 5: Unwind — skip if user not found (deleted accounts)
+      { $unwind: { path: '$user', preserveNullAndEmptyArrays: false } },
+
+      // Step 6: Shape the response
+      {
+        $project: {
+          _id: 1,
+          name: '$user.name',
+          profile_img: '$user.profile_img',
+          lastMessage: 1,
+          lastSenderId: 1,
+          lastTime: 1,
+          isSeen: 1,
+          unreadCount: 1,
+        },
+      },
+
+      // Step 7: Sort by most recent conversation first
+      { $sort: { lastTime: -1 } },
+    ]);
+
+    res.json({ success: true, data: chats });
+  } catch (error) {
+    next(error);
+  }
+};
+
+// ─────────────────────────────────────────────────────────────────────────────
+// POST /chat/read
+// Body: { sender_id, receiver_id }
+// Also supports GET /chat/read?sender_id=&receiver_id= for backward compat
+// ─────────────────────────────────────────────────────────────────────────────
+exports.markAsRead = async (req, res, next) => {
+  try {
+    // Accept from body (POST) or query string (GET)
+    const sender_id = req.body.sender_id || req.query.sender_id;
+    const receiver_id = req.body.receiver_id || req.query.receiver_id;
+
+    if (!sender_id || !receiver_id) {
+      return res.status(400).json({
+        success: false,
+        message: 'sender_id and receiver_id are required',
+      });
+    }
+
+    await Message.updateMany(
+      { sender_id, receiver_id, is_read: false },
+      { $set: { is_read: true } }
+    );
+
+    res.json({ success: true, message: 'Messages marked as read' });
+  } catch (error) {
+    next(error);
+  }
+};
+
+// ─────────────────────────────────────────────────────────────────────────────
+// GET /chat/unread?user_id=
+// Returns total unread count for the user across all conversations
+// ─────────────────────────────────────────────────────────────────────────────
+exports.getUnreadCount = async (req, res, next) => {
+  try {
+    const { user_id } = req.query;
+
+    if (!user_id) {
+      return res.status(400).json({ success: false, message: 'user_id is required' });
+    }
+
+    const count = await Message.countDocuments({
+      receiver_id: user_id,
+      is_read: false,
+    });
+
+    res.json({ success: true, unread: count });
+  } catch (error) {
+    next(error);
+  }
+};
+
+// ─────────────────────────────────────────────────────────────────────────────
+// DELETE /chat/message/:message_id
+// Deletes a single message by ID
+// ─────────────────────────────────────────────────────────────────────────────
+exports.deleteMessage = async (req, res, next) => {
+  try {
+    const { message_id } = req.params;
+
+    if (!message_id) {
+      return res.status(400).json({ success: false, message: 'message_id is required' });
+    }
+
+    const deleted = await Message.findByIdAndDelete(message_id);
+
+    if (!deleted) {
+      return res.status(404).json({ success: false, message: 'Message not found' });
+    }
+
+    res.json({ success: true, message: 'Message deleted' });
+  } catch (error) {
+    next(error);
+  }
+};
+
+// ─────────────────────────────────────────────────────────────────────────────
+// DELETE /chat/delete
+// Body: { user1, user2 }
+// Deletes entire conversation between two users
+// ─────────────────────────────────────────────────────────────────────────────
+exports.deleteChat = async (req, res, next) => {
+  try {
+    const { user1, user2 } = req.body;
+
+    if (!user1 || !user2) {
+      return res.status(400).json({ success: false, message: 'user1 and user2 are required' });
+    }
+
+    await Message.deleteMany({
+      $or: [
+        { sender_id: user1, receiver_id: user2 },
+        { sender_id: user2, receiver_id: user1 },
+      ],
+    });
+
+    res.json({ success: true, message: 'Chat deleted' });
+  } catch (error) {
+    next(error);
+  }
+};
 
 // 🔹 PROFILE FETCH
 exports.getProfile = async (req, res, next) => {
@@ -703,7 +981,16 @@ exports.getSentInterests = async (req, res, next) => {
 // 🔹 PROFILE VIEW TRACK
 exports.viewProfile = async (req, res, next) => {
   try {
-    const { profile_id, viewer_id } = req.query;
+    console.log("BODY:", req.body);
+
+    const { profile_id, viewer_id } = req.body;
+
+    if (!profile_id || !viewer_id) {
+      return res.status(400).json({
+        success: false,
+        message: "profile_id and viewer_id required"
+      });
+    }
 
     await ProfileView.create({ profile_id, viewer_id });
 
@@ -716,37 +1003,42 @@ exports.viewProfile = async (req, res, next) => {
 // 🔹 WHO VIEWED MY PROFILE
 exports.whoViewedMyProfile = async (req, res, next) => {
   try {
-    const { profile_id } = req.query;
+    const { profile_id, limit = 10, offset = 0 } = req.query;
 
     if (!profile_id) {
       return res.status(400).json({ success: false, message: "profile_id required" });
     }
 
     const data = await ProfileView.find({ profile_id })
-      .populate("viewer_id", "name age city occupation profile_img gender state");
+      .populate("viewer_id", "name age city occupation profile_img gender state")
+      .sort({ createdAt: -1 })
+      .skip(parseInt(offset))
+      .limit(parseInt(limit));
 
-    const formatted = data.map(item => {
-      const viewer = item.viewer_id || {};
-      return {
-        user_id: viewer._id || '',
-        name: viewer.name || 'Unknown',
-        age: viewer.age || '',
-        city: viewer.city || '',
-        state: viewer.state || '',
-        occupation: viewer.occupation || '',
-        gender: viewer.gender || '',
-        profile_img: viewer.profile_img || '',
-        last_viewed_at: item.createdAt || '',
-        total_views: 1,
-      };
-    });
+    const formatted = data
+      .map(item => {
+        const viewer = item.viewer_id;
+        if (!viewer) return null;
+
+        return {
+          user_id: viewer._id,
+          name: viewer.name,
+          age: viewer.age,
+          city: viewer.city,
+          state: viewer.state,
+          occupation: viewer.occupation,
+          gender: viewer.gender,
+          profile_img: viewer.profile_img,
+          last_viewed_at: item.createdAt,
+        };
+      })
+      .filter(Boolean);
 
     res.json({ success: true, data: formatted });
   } catch (error) {
     next(error);
   }
 };
-
 
 // 🔹 RECENTLY VIEWED PROFILES (profiles YOU viewed)
 exports.recentlyViewedProfiles = async (req, res, next) => {
@@ -822,6 +1114,95 @@ exports.whoViewedProfileRecently = async (req, res, next) => {
     res.json({ success: true, data: formatted });
   } catch (error) {
     next(error);
+  }
+};
+
+//Filter method
+
+exports.filterProfiles = async (req, res) => {
+  try {
+    const {
+      from_age,
+      to_age,
+      higherEducation,
+      employeeIn,
+      city,
+      from_income,
+      to_income,
+      gender,
+      religion,
+      caste,
+      page = 1,
+      limit = 20,
+    } = req.query;
+
+    const query = {
+      isActive: true,
+    };
+
+    // AGE FILTER
+    if (from_age || to_age) {
+      query.age = {};
+
+      if (from_age) {
+        query.age.$gte = Number(from_age);
+      }
+
+      if (to_age) {
+        query.age.$lte = Number(to_age);
+      }
+    }
+
+    // EDUCATION FILTER
+    if (higher_education) {
+      query.higherEducation = higher_education;
+    }
+
+    if (employee_in) {
+      query.employeeIn = employee_in;
+    }
+
+    if (city) {
+      query.city = city;
+    }
+
+    if (from_income || to_income) {
+      query.annualIncome = {};
+
+      if (from_income) {
+        query.annualIncome.$gte = Number(from_income);
+      }
+
+      if (to_income) {
+        query.annualIncome.$lte = Number(to_income);
+      }
+    }
+
+    // PAGINATION
+    const skip = (Number(page) - 1) * Number(limit);
+
+    const profiles = await User.find(query)
+      .sort({ createdAt: -1 })
+      .skip(skip)
+      .limit(Number(limit));
+
+    const total = await User.countDocuments(query);
+    
+    res.status(200).json({
+      success: true,
+      total,
+      currentPage: Number(page),
+      totalPages: Math.ceil(total / limit),
+      data: profiles,
+    });
+  } catch (error) {
+    console.log("Filter API Error:", error);
+
+    res.status(500).json({
+      success: false,
+      message: "Failed to filter profiles",
+      error: error.message,
+    });
   }
 };
 
