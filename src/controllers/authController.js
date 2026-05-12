@@ -98,7 +98,9 @@ exports.registerUser = async (req, res) => {
       });
     }
 
-    const existingUser = await User.findOne({ mobile: data.mobile });
+    const existingUser = await User.findOne({
+      mobile: data.mobile
+    });
 
     if (existingUser) {
       return res.status(400).json({
@@ -107,6 +109,12 @@ exports.registerUser = async (req, res) => {
       });
     }
 
+    // Generate User ID
+    const count = await User.countDocuments();
+
+    data.userId = `MAT${1000 + count + 1}`;
+
+    // Upload image
     if (req.file) {
       data.profile_img = req.file.filename;
     }
@@ -130,6 +138,7 @@ exports.registerUser = async (req, res) => {
 
   } catch (error) {
     console.error("Register Error:", error);
+
     return res.status(500).json({
       success: false,
       error: error.message

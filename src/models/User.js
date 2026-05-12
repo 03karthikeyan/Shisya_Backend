@@ -2,7 +2,7 @@ const mongoose = require('mongoose'); // ✅ REQUIRED
 const AutoIncrement = require('mongoose-sequence')(mongoose);
 
 const userSchema = new mongoose.Schema({
-  userId: { type: Number, unique: true },
+  userId: { type: String, unique: true },
 
   mobile: { type: String, required: true, unique: true },
   isVerified: { type: Boolean, default: false },
