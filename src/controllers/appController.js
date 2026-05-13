@@ -1187,7 +1187,7 @@ exports.filterProfiles = async (req, res) => {
       .limit(Number(limit));
 
     const total = await User.countDocuments(query);
-    
+
     res.status(200).json({
       success: true,
       total,
@@ -1210,42 +1210,34 @@ exports.filterProfiles = async (req, res) => {
 // 🔹 UPLOAD IMAGE
 exports.uploadProfileImage = async (req, res, next) => {
   try {
-    const user_id = (req.query.user_id || req.body.user_id || '').toString().trim();
-
-    if (!user_id) {
-      return res.status(400).json({ success: false, message: "user_id required" });
-    }
+    const user_id = req.query.user_id || req.body.user_id;
 
     if (!req.file) {
-      return res.status(400).json({ success: false, message: "No image file uploaded" });
+      return res.status(400).json({
+        success: false,
+        message: "No image uploaded",
+      });
     }
 
-    // ✅ Build image URL
-    const imageUrl = `${req.protocol}://${req.get('host')}/uploads/profile_images/${req.file.filename}`;
+    const imageUrl = req.file.path;
 
-    // ✅ Save to user
     const user = await User.findByIdAndUpdate(
       user_id,
-      { $set: { profile_img: req.file.filename } }, // store filename only
+      {
+        $set: {
+          profile_img: imageUrl,
+        },
+      },
       { new: true }
     );
 
-    if (!user) {
-      return res.status(404).json({ success: false, message: "User not found" });
-    }
-
-    console.log("Profile image saved:", req.file.filename);
-
     res.json({
       success: true,
-      message: "Profile image uploaded successfully",
-      filename: req.file.filename,
       image_url: imageUrl,
-      profile_img: req.file.filename
+      profile_img: imageUrl,
+      user,
     });
-
   } catch (error) {
-    console.error("uploadProfileImage ERROR:", error.message);
     next(error);
   }
 };

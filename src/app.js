@@ -25,7 +25,7 @@ app.use(express.urlencoded({ extended: true }));
 app.use('/matrimony/api/auth', require('./routes/authRoutes'));
 app.use('/matrimony/api', require('./routes/appRoutes'));
 app.use("/matrimony/api/chat", require("./routes/appRoutes"));
-app.use('/uploads', express.static(path.join(__dirname, '../uploads')));
+app.use('/uploads', express.static(path.join(__dirname, 'uploads')));
 
 // Global error handler (must be last)
 app.use((err, req, res, next) => {
