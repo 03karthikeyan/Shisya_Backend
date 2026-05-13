@@ -140,6 +140,73 @@ exports.getStates = async (req, res, next) => {
   }
 };
 
+// 🔹 PREMIUM / SUBSCRIBED USERS LIST
+exports.getPremiumUsers = async (req, res, next) => {
+  try {
+    const {
+      user_id,
+      page = 1,
+      limit = 20,
+    } = req.query;
+
+    const skip = (Number(page) - 1) * Number(limit);
+
+    // ✅ Base query
+    let query = {
+      isPremium: true,
+      isActive: true,
+    };
+
+    // ✅ Exclude current user
+    if (user_id) {
+      query._id = { $ne: user_id };
+    }
+
+    // ✅ ADD HERE
+    if (user_id) {
+      const currentUser = await User.findById(user_id);
+
+      if (currentUser) {
+        if (currentUser.gender?.toLowerCase() === "male") {
+          query.gender = "Female";
+        } else if (currentUser.gender?.toLowerCase() === "female") {
+          query.gender = "Male";
+        }
+      }
+    }
+
+    // ✅ Fetch premium users
+    const users = await User.find(query)
+      .sort({ createdAt: -1 })
+      .skip(skip)
+      .limit(Number(limit))
+      .lean();
+
+    const formattedUsers = users.map((user) => {
+      return {
+        ...user,
+        profile_img_url: user.profile_img
+          ? `${req.protocol}://${req.get('host')}/${user.profile_img.replace(/\\/g, '/')}`
+          : null,
+      };
+    });
+
+    const total = await User.countDocuments(query);
+
+    res.json({
+      success: true,
+      total,
+      currentPage: Number(page),
+      totalPages: Math.ceil(total / limit),
+      premium_count: total,
+      data: formattedUsers,
+    });
+
+  } catch (error) {
+    console.log("Premium Users API Error:", error);
+    next(error);
+  }
+};
 
 // 🔹 SUBSCRIPTION LIST
 exports.getSubscriptionPlans = async (req, res, next) => {

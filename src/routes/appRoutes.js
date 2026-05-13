@@ -11,6 +11,7 @@ router.get('/annual-income', ctrl.getAnnualIncome);
 router.get('/districts', ctrl.getDistricts);
 router.get('/districts-by-state', ctrl.getDistrictsByState);
 
+router.get('/premium-users', ctrl.getPremiumUsers);
 router.get('/subscription_plan_list', ctrl.getSubscriptionPlans);
 router.get('/subscription', ctrl.purchaseSubscription);
 router.get('/subscription_status', ctrl.getSubscriptionStatus);
@@ -29,14 +30,14 @@ router.get("/list", ctrl.getChatList);
 
 // 🔹 Mark as Read
 router.post("/read", ctrl.markAsRead);
-router.get('/read', ctrl.markAsRead);     
+router.get('/read', ctrl.markAsRead);
 
 // 🔹 Delete Single Message
 router.delete("/message/:message_id", ctrl.deleteMessage);
 
 // 🔹 Delete Full Chat
 router.delete('/message/:message_id', ctrl.deleteMessage); // DELETE /chat/message/:id
-router.delete('/delete', ctrl.deleteChat); 
+router.delete('/delete', ctrl.deleteChat);
 
 // 🔹 Unread Count
 router.get("/unread", ctrl.getUnreadCount);
