@@ -149,7 +149,10 @@ exports.getPremiumUsers = async (req, res, next) => {
       limit = 20,
     } = req.query;
 
-    const skip = (Number(page) - 1) * Number(limit);
+    const pageNumber = Math.max(Number(page) || 1, 1);
+    const limitNumber = Math.max(Number(limit) || 20, 1);
+
+    const skip = (pageNumber - 1) * limitNumber;
 
     // ✅ Base query
     let query = {
@@ -162,7 +165,7 @@ exports.getPremiumUsers = async (req, res, next) => {
       query._id = { $ne: user_id };
     }
 
-    // ✅ ADD HERE
+    // ✅ Opposite gender filter
     if (user_id) {
       const currentUser = await User.findById(user_id);
 
@@ -175,29 +178,42 @@ exports.getPremiumUsers = async (req, res, next) => {
       }
     }
 
-    // ✅ Fetch premium users
+    // ✅ Total count
+    const total = await User.countDocuments(query);
+
+    // ✅ If page exceeds total pages
+    const totalPages = Math.ceil(total / limitNumber);
+
+    if (pageNumber > totalPages && total > 0) {
+      return res.json({
+        success: false,
+        message: "Page exceeds total pages",
+        total,
+        currentPage: pageNumber,
+        totalPages,
+        data: [],
+      });
+    }
+
+    // ✅ Fetch users
     const users = await User.find(query)
       .sort({ createdAt: -1 })
       .skip(skip)
-      .limit(Number(limit))
+      .limit(limitNumber)
       .lean();
 
-    const formattedUsers = users.map((user) => {
-      return {
-        ...user,
-        profile_img_url: user.profile_img
-          ? `${req.protocol}://${req.get('host')}/${user.profile_img.replace(/\\/g, '/')}`
-          : null,
-      };
-    });
-
-    const total = await User.countDocuments(query);
+    const formattedUsers = users.map((user) => ({
+      ...user,
+      profile_img_url: user.profile_img
+        ? `${req.protocol}://${req.get("host")}/${user.profile_img.replace(/\\/g, "/")}`
+        : null,
+    }));
 
     res.json({
       success: true,
       total,
-      currentPage: Number(page),
-      totalPages: Math.ceil(total / limit),
+      currentPage: pageNumber,
+      totalPages,
       premium_count: total,
       data: formattedUsers,
     });
