@@ -152,8 +152,6 @@ exports.getPremiumUsers = async (req, res, next) => {
     const pageNumber = Math.max(Number(page) || 1, 1);
     const limitNumber = Math.max(Number(limit) || 20, 1);
 
-    const skip = (pageNumber - 1) * limitNumber;
-
     // ✅ Base query
     let query = {
       isPremium: true,
@@ -181,19 +179,16 @@ exports.getPremiumUsers = async (req, res, next) => {
     // ✅ Total count
     const total = await User.countDocuments(query);
 
-    // ✅ If page exceeds total pages
-    const totalPages = Math.ceil(total / limitNumber);
+    const totalPages = Math.ceil(total / limitNumber) || 1;
 
-    if (pageNumber > totalPages && total > 0) {
-      return res.json({
-        success: false,
-        message: "Page exceeds total pages",
-        total,
-        currentPage: pageNumber,
-        totalPages,
-        data: [],
-      });
+    // ✅ Auto-fix invalid page
+    let validPage = pageNumber;
+
+    if (pageNumber > totalPages) {
+      validPage = totalPages;
     }
+
+    const skip = (validPage - 1) * limitNumber;
 
     // ✅ Fetch users
     const users = await User.find(query)
@@ -202,17 +197,16 @@ exports.getPremiumUsers = async (req, res, next) => {
       .limit(limitNumber)
       .lean();
 
+    // ✅ Correct image URL
     const formattedUsers = users.map((user) => ({
       ...user,
-      profile_img_url: user.profile_img
-        ? `${req.protocol}://${req.get("host")}/${user.profile_img.replace(/\\/g, "/")}`
-        : null,
+      profile_img_url: user.profile_img || null,
     }));
 
     res.json({
       success: true,
       total,
-      currentPage: pageNumber,
+      currentPage: validPage,
       totalPages,
       premium_count: total,
       data: formattedUsers,
